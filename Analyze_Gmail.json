@@ -1,0 +1,687 @@
+{
+  "name": "Analyze Gmail",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 14,
+              "triggerAtMinute": 40
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        120,
+        40
+      ],
+      "id": "fd1d0c4a-bcad-4f5e-8a33-bd436e75ef28",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        920,
+        40
+      ],
+      "id": "5310b97a-195c-45dd-9274-dc1fd4c7fc88",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "id",
+        "include": "selectedOtherFields",
+        "fieldsToInclude": "fromEmail, subject, text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        760,
+        40
+      ],
+      "id": "5ff57cff-6526-493a-937b-9434c3a5711e",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.sendToAI }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "id": "f5807e47-edb3-4560-ab59-a4cc12582fa3"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "655033d0-1137-461a-8d1c-ec568ca3dd6a",
+                    "leftValue": "={{ $json.sendToAI }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "false",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1400,
+        160
+      ],
+      "id": "83739997-6ab6-46ba-a48e-24fb55df56d9",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);\n\n// Return as an array of objects\nreturn [\n  {\n    json: {\n      afterTimestamp: twentyFourHoursAgo.toISOString(),\n      nowTimestamp: now.toISOString(),\n      gmailQuery: `after:${Math.floor(twentyFourHoursAgo.getTime()/1000)} before:${Math.floor(now.getTime()/1000)}`\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        280,
+        40
+      ],
+      "id": "e41aa171-94c3-4924-a408-8a5b3637460a",
+      "name": "Determine Timestamp"
+    },
+    {
+      "parameters": {
+        "jsCode": "const personalContacts = [\"your-personal-email@example.com\"];\n\nconst jobRecommendationSources = {\n  \"glassdoor.com\": true,\n  \"noreply@glassdoor.com\": true,\n  \"linkedin.com\": true,\n  \"inhire.io\": true\n};\n\nconst jobApplicationSources = {\n  \"indeedapply@indeed.com\": true,\n  \"noreply@candidates.workablemail.com\": true,\n  \"ats.rippling.com\": true\n};\n\n// Keywords that indicate application confirmation, not just a recommendation\nconst applicationKeywords = [\n  \"application\",\n  \"thanks for applying\",\n  \"your application\",\n  \"congratulations\",\n  \"submitted\"\n];\n\nconst marketingDomains = [\n  \"uber.com\",\n  \"glovoapp.com\",\n  \"ubereats\",\n  \"doordash\",\n  \"grubhub\",\n  \"notifications.graph.one\",\n  \"noreply@\"\n];\n\nconst systemDomains = [\n  \"accounts.google.com\",\n  \"no-reply@accounts.google.com\"\n];\n\nconst forumDomains = [\n  \"stackoverflow.com\",\n  \"github.com\",\n  \"reddit.com\",\n  \"medium.com\",\n  \"dev.to\",\n  \"discord\"\n];\n\nreturn items.map(item => {\n  const email = item.json;\n  const from = email.fromEmail?.toLowerCase() || \"\";\n  const subject = email.subject?.toLowerCase() || \"\";\n  const text = email.text?.toLowerCase() || \"\";\n  \n  let labelId = null;\n  let labelName = null;\n  let sendToAI = false;\n  let confidence = 0;\n  let reason = \"\";\n  \n  // ===== RULE 1: Personal Contacts (Highest Priority) =====\n  if (personalContacts.includes(from)) {\n    labelName = \"CATEGORY_PERSONAL\";\n    confidence = 1.0;\n    reason = \"Matched personal contact\";\n  }\n  \n  // ===== RULE 2: System/Security Alerts =====\n  else if (\n    systemDomains.some(domain => from.includes(domain)) &&\n    (subject.includes(\"security\") || subject.includes(\"alert\") || subject.includes(\"access\"))\n  ) {\n    labelName = \"SYSTEM_ALERT\";\n    confidence = 0.98;\n    reason = \"Security alert from Google\";\n  }\n  \n  // ===== RULE 3A: Job Recommendations (Glassdoor, LinkedIn, Inhire) =====\n  else if (\n    Object.keys(jobRecommendationSources).some(source => from.includes(source)) &&\n    !applicationKeywords.some(kw => subject.includes(kw))\n  ) {\n    labelName = \"JOB_RECOMMENDATIONS\";\n    confidence = 0.95;\n    reason = \"Job recommendations from platform\";\n  }\n  \n  // ===== RULE 3B: Job Applications (Indeed Apply, Workable, ATS) =====\n  else if (\n    Object.keys(jobApplicationSources).some(source => from.includes(source)) &&\n    applicationKeywords.some(kw => subject.includes(kw))\n  ) {\n    labelName = \"CATEGORY_UPDATES\";\n    confidence = 0.95;\n    reason = \"Application confirmation\";\n  }\n  \n  // ===== RULE 4: Marketing/Promotional =====\n  else if (\n    marketingDomains.some(domain => from.includes(domain)) ||\n    (subject.includes(\"40% off\") || subject.includes(\"save\") || subject.includes(\"discount\")) ||\n    (subject.includes(\"order\") && subject.includes(\"again\"))\n  ) {\n    labelName = \"CATEGORY_PROMOTIONS\";\n    confidence = 0.92;\n    reason = \"Marketing/promotional content\";\n  }\n  \n  // ===== RULE 5: Forums/Development =====\n  else if (\n    forumDomains.some(domain => from.includes(domain))\n  ) {\n    labelName = \"CATEGORY_FORUMS\";\n    confidence = 0.90;\n    reason = \"Forum/developer community\";\n  }\n  \n  // ===== RULE 6: Newsletter/Digest (high confidence patterns) =====\n  else if (\n    (subject.includes(\"top picks\") && subject.includes(\"week\")) ||\n    (subject.includes(\"digest\")) ||\n    (text.includes(\"unsubscribe\") && text.length > 1500)\n  ) {\n    labelName = \"CATEGORY_UPDATES\";\n    confidence = 0.85;\n    reason = \"Newsletter/digest content\";\n  }\n  \n  // ===== FALLBACK: Send to AI =====\n  else {\n    sendToAI = true;\n    confidence = 0.0;\n    reason = \"Ambiguous - needs AI decision\";\n  }\n  \n  return {\n    json: {\n      ...email,\n      labelName,\n      labelId,\n      sendToAI,\n      confidence,\n      reason\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        140
+      ],
+      "id": "e5f53b4d-6c51-48fd-bb79-9fe5da36030b",
+      "name": "Determine Message"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $json.id }}",
+        "labelIds": "={{ $json.labelId }}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        220
+      ],
+      "id": "e78b00a1-76ef-421d-9a7c-ff41d238c45b",
+      "name": "Add Label",
+      "webhookId": "... your webhook id ...",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "... your gmail oauth2 id ...",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "removeLabels",
+        "messageId": "={{ $json.id }}",
+        "labelIds": [
+          "INBOX"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1680,
+        300
+      ],
+      "id": "bfb35907-ad7e-459f-b77c-58ca9f0fffd0",
+      "name": "Remove From Inbox",
+      "webhookId": "... your webhook id ...",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "... your gmail oauth2 id ...",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "label",
+        "returnAll": true
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        40
+      ],
+      "id": "55447620-0905-47e8-9917-e587a3534cf4",
+      "name": "Get All Labels",
+      "webhookId": "... your webhook id ...",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "... your gmail oauth2 id ...",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get all labels from the Gmail \"Get Labels\" node\nconst input = $input.all();\n\n// Usually Gmail returns all labels under json\nconst rawLabels = input.map(i => i.json).flat();\n\n// Normalize label format\nconst labels = rawLabels.map(label => ({\n  id: label.id,\n  name: label.name\n}));\n\n// Get message ID from Code4\nconst messageId = $node[\"Choose Path\"].json.id;\n\n// Return a single combined JSON object\nreturn [\n  {\n    json: {\n      labels,\n      message_id: messageId\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        40
+      ],
+      "id": "7cfd6e88-ce97-49fb-bcf4-160ecd09afe0",
+      "name": "Check Label"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: (() => {\n      // Get email data from Code4\n      const emailData = $node[\"Choose Path\"].json;\n      const email = emailData || {};\n\n      // Get all Gmail labels from Code5\n      const labelData = $node[\"Check Label\"].json;\n      const allLabels = labelData?.labels || [];\n\n      // Build list of available labels for AI\n      const labelsList = allLabels.map(l => `- ${l.name}`).join(\"\\n\");\n\n      // Prepare clean email info\n      const from = email.fromEmail || \"unknown sender\";\n      const subject = email.subject || \"(no subject)\";\n      const text = email.text ? email.text.substring(0, 300) : \"\";\n\n      // Create the AI prompt\n      const prompt = `\nYou are an intelligent email categorization assistant. \nClassify the following email into ONE of the provided categories (labels).\n\n📩 **Email Information**\nFrom: ${from}\nSubject: ${subject}\n\nPreview:\n\"${text}\"\n\n🏷️ **Available Labels:**\n${labelsList}\n\n🧠 **Instructions:**\n1. Choose ONE label from the list above that best matches this email.\n2. If no label fits well, suggest a NEW one using UPPERCASE_WITH_UNDERSCORES (max 25 characters).\n3. Respond ONLY with the label name (no explanations or punctuation).\n4. Example new labels: \"RESEARCH_PAPERS\", \"JOB_APPLICATION\", \"NEWSLETTER\".\n5. If you ever want to use  \"TRASH\" label, use \"SPAM\" instead so I won't accidently remove something important. \n\nNow respond with ONLY the most suitable label name.\n`;\n\n      return {\n        labels: allLabels,\n        availableLabels: allLabels,\n        aiPrompt: prompt,\n        emailInfo: {\n          from,\n          subject,\n          preview: text\n        }\n      };\n    })()\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        100
+      ],
+      "id": "bfe5dc36-1420-4d3f-b29d-3b03082a8033",
+      "name": "Prompt"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.aiPrompt }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        1960,
+        160
+      ],
+      "id": "aea7678f-4991-4407-91e8-eef503412ac2",
+      "name": "Return Label",
+      "credentials": {
+        "openAiApi": {
+          "id": "... your gmail oauth2 id ...",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $json.messageId }}",
+        "labelIds": "={{ $json.labelId || $json.id}}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2700,
+        140
+      ],
+      "id": "dd7800d1-9855-4fab-8888-b6a5cdbbc307",
+      "name": "Add_Label",
+      "webhookId": "... your webhook id ...",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "... your gmail oauth2 id ...",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "removeLabels",
+        "messageId": "={{ $json.id }}",
+        "labelIds": [
+          "INBOX"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2840,
+        360
+      ],
+      "id": "842c242b-5e5b-407b-9fa5-b2061911ec8b",
+      "name": "Remove_From_Inbox",
+      "webhookId": "... your webhook id ...",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "... your gmail oauth2 id ...",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "label",
+        "operation": "create",
+        "name": "={{ $json.aiLabel }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2580,
+        320
+      ],
+      "id": "3334b87b-e79f-484c-99ca-0e066efc7fc7",
+      "name": "Create Label",
+      "webhookId": "... your webhook id ...",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "... your gmail oauth2 id ...",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "861e889b-6628-4077-b8b2-002cf4977856",
+              "leftValue": "={{ $json.exists }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2440,
+        240
+      ],
+      "id": "f044aa41-c800-4245-8575-805b3e981166",
+      "name": "Checking"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get AI's label prediction\nconst aiLabel = $json.message?.content?.trim();\n\n// Get all Gmail labels from Code5 node\nconst labelsData = $node[\"Check Label\"].json.labels || [];\n\n// Find matching label (case-insensitive for safety)\nconst matchedLabel = labelsData.find(\n  label => label.name.toLowerCase() === aiLabel.toLowerCase()\n);\n\n// Return result\nreturn [\n  {\n    json: {\n      aiLabel,\n      exists: !!matchedLabel,\n      labelId: matchedLabel ? matchedLabel.id : null,\n      messageId: $node[\"Check Label\"].json.message_id || null\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        160
+      ],
+      "id": "c539870b-8d23-403b-9203-5100fb4d6069",
+      "name": "Check IF Label Exists"
+    },
+    {
+      "parameters": {
+        "jsCode": "const labelMap = {\n  \"CATEGORY_PERSONAL\": \"CATEGORY_PERSONAL\",\n  \"SYSTEM_ALERT\": \"Label_4\",\n  \"JOB_RECOMMENDATIONS\": \"Label_5\",\n  \"CATEGORY_UPDATES\": \"CATEGORY_UPDATES\",\n  \"CATEGORY_PROMOTIONS\": \"CATEGORY_PROMOTIONS\",\n  \"CATEGORY_FORUMS\": \"CATEGORY_FORUMS\",\n  \"AI_DECISION\": null  // Will be set after AI decides\n};\n\nreturn items.map(item => {\n  const email = item.json;\n  \n  if (email.labelName) {\n    email.labelId = labelMap[email.labelName] || email.labelName;\n  }\n  \n  return { json: email };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        160
+      ],
+      "id": "baaca66e-c77c-404d-8bee-ef3ba0b305aa",
+      "name": "Choose Path"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": "={{ false }}",
+        "limit": 500,
+        "simple": false,
+        "filters": {
+          "receivedAfter": "={{ $json.afterTimestamp }}",
+          "receivedBefore": "={{ $json.nowTimestamp }}"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        440,
+        40
+      ],
+      "id": "68ce18ae-8538-4039-b09e-f1e84534e667",
+      "name": "Get All Emails",
+      "webhookId": "... your webhook id ...",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "... your gmail oauth2 id ...",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const msg = item.json;\n  const fromEmail = msg.from.value[0].address;\n  let text = msg.text || \"\";\n\n  // Extract URLs BEFORE cleaning text\n  const urls = Array.from(text.matchAll(/https?:\\/\\/[^\\s)]+/g), m => m[0]);\n  \n  // Filter out tracking/redirect URLs (keep only useful ones)\n  const usefulUrls = urls.filter(url => {\n    const urlLower = url.toLowerCase();\n    // Remove obvious tracking/redirect patterns\n    return !(\n      urlLower.includes(\"track.\") ||           // track.glovoapp.com, track.emailurl.com\n      urlLower.includes(\"email.mgm.\") ||       // email.mgm.uber.com\n      urlLower.includes(\"d1a3f4spazzrp4.\") ||  // CDN tracking pixels\n      urlLower.match(/\\/f\\/a\\/[a-zA-Z0-9~_-]+/) || // Generic tracking redirects\n      urlLower.includes(\"cloudfront.net\") ||   // AWS CloudFront tracking\n      urlLower.includes(\"=\") && url.length > 200 // Super long URLs with params\n    );\n  });\n\n  // For Glassdoor: replace entire text\n  if (fromEmail.includes(\"glassdoor.com\")) {\n    text = \"[Job listing from Glassdoor]\";\n  }\n  // For Very long texts (newsletters, marketing): aggressive cleanup\n  else if (text.length > 800) {\n    const lines = text\n      .split(/\\r?\\n/)\n      .map(l => l.trim())\n      .filter(l => l && l.length > 5); // remove short/empty lines\n\n    // Take first 1-2 meaningful lines (not just subject repeats)\n    let summary = \"\";\n    for (let i = 0; i < Math.min(2, lines.length); i++) {\n      if (lines[i].length < 200) { // avoid huge lines\n        summary += lines[i] + \"\\n\";\n      }\n    }\n    summary = summary.trim() || \"[Long promotional email]\";\n    text = summary;\n  }\n  // For medium texts with many URLs: clean up\n  else if (text.length > 300 && urls.length > 3) {\n    const lines = text\n      .split(/\\r?\\n/)\n      .map(l => l.trim())\n      .filter(l => l && !l.startsWith(\"http\"));\n    \n    text = lines.slice(0, 3).join(\"\\n\") || \"[Email content]\";\n  }\n\n  // Normalize URLs: remove tracking params and shorten\n  const cleanUrls = usefulUrls\n    .slice(0, 2) // limit to 2 URLs max\n    .map(u => {\n      // Manual URL parsing (no URL constructor in n8n sandbox)\n      const match = u.match(/https?:\\/\\/([^\\/?#]+)(\\/[^\\?#]*)?/);\n      if (match) {\n        const domain = match[1];\n        const path = match[2] || \"\";\n        return `${domain}${path}`.substring(0, 80); // max 80 chars\n      }\n      return u.substring(0, 80);\n    })\n    .filter((u, i, arr) => arr.indexOf(u) === i); // deduplicate\n\n  // Build final text\n  let finalText = text;\n  if (cleanUrls.length > 0) {\n    finalText += \"\\n[\" + cleanUrls.join(\" | \") + \"]\";\n  }\n\n  return {\n    json: {\n      id: msg.id,\n      date: msg.date,\n      subject: msg.subject,\n      fromName: msg.from.value[0].name,\n      fromEmail: fromEmail,\n      toEmail: msg.to.value[0].address,\n      text: finalText,\n      labels: msg.labelIds,\n      urlCount: urls.length,\n      usefulUrlCount: cleanUrls.length,\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        40
+      ],
+      "id": "c0a6201a-7d2d-4aa8-9be1-d1f8fccee967",
+      "name": "Get Necessary Data"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Determine Timestamp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Determine Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Get All Labels",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Timestamp": {
+      "main": [
+        [
+          {
+            "node": "Get All Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Determine Message": {
+      "main": [
+        [
+          {
+            "node": "Choose Path",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Label": {
+      "main": [
+        [
+          {
+            "node": "Remove From Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove From Inbox": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Labels": {
+      "main": [
+        [
+          {
+            "node": "Check Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Label": {
+      "main": [
+        [
+          {
+            "node": "Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt": {
+      "main": [
+        [
+          {
+            "node": "Return Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Label": {
+      "main": [
+        [
+          {
+            "node": "Check IF Label Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add_Label": {
+      "main": [
+        [
+          {
+            "node": "Remove_From_Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove_From_Inbox": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Label": {
+      "main": [
+        [
+          {
+            "node": "Add_Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checking": {
+      "main": [
+        [
+          {
+            "node": "Add_Label",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Label",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check IF Label Exists": {
+      "main": [
+        [
+          {
+            "node": "Checking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Path": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Emails": {
+      "main": [
+        [
+          {
+            "node": "Get Necessary Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Necessary Data": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b6189143-cf4b-490c-bcfe-df74f25be31d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bf0d13ebd71f7a1db36f35e8dbcb706495ed527b8c80fe160b1263b7b12a48d7"
+  },
+  "id": "6Qj2NJvTppLsaXSC",
+  "tags": []
+}
